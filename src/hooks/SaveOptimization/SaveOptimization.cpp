@@ -1,12 +1,9 @@
 #include "SaveOptimization.h"
 
-#include "../../RE/WritableStringArray.h"
-#include "../../RE/WriteBuffer.h"
-
 #include <MinHook.h>
 #include <future>
 
-std::future<RE::WriteBuffer> vmSave;
+std::future<RE::BSStorage::WriteBuffer> vmSave;
 
 std::vector<RE::BSFixedString>                   StringTableCache;
 boost::unordered_flat_map<const char*, uint32_t> StringTableCacheLookup;
@@ -16,9 +13,9 @@ static RE::SaveStorageWrapper* Ctor(void* svWrapperSpace, RE::Win32FileType* fil
 	static REL::Relocation<void (*)(void* thiz, RE::Win32FileType* file)> Ctor{ RELOCATION_ID(35172, 36062) };
 	Ctor(svWrapperSpace, fileStream);
 	RE::SaveStorageWrapper* svWrapper = (RE::SaveStorageWrapper*)svWrapperSpace;
-	RE::MemoryManager::GetSingleton()->GetThreadScrapHeap()->Deallocate(((RE::WriteBuffer*)svWrapper->unk10)->startPtr);
+	RE::MemoryManager::GetSingleton()->GetThreadScrapHeap()->Deallocate(svWrapper->buffer->startPtr);
 
-	auto&& writebuf = ((RE::WriteBuffer*)svWrapper->unk10);
+	auto&& writebuf = svWrapper->buffer;
 
 	void* rawMem = malloc(size);
 	if (!rawMem) {
@@ -30,7 +27,7 @@ static RE::SaveStorageWrapper* Ctor(void* svWrapperSpace, RE::Win32FileType* fil
 	writebuf->startPtr = rawMem;
 	writebuf->size = size;
 	writebuf->curPtr = writebuf->startPtr;
-	svWrapper->unk18 = 1;  //bWriteToBuffer
+	svWrapper->bWriteToBuffer = 1;  //bWriteToBuffer
 
 	return svWrapper;
 }
@@ -38,7 +35,7 @@ static RE::SaveStorageWrapper* Ctor(void* svWrapperSpace, RE::Win32FileType* fil
 //MUST SAVE STARTPTR AND FREE THEN ELSEWHERE
 static void Dtor(RE::SaveStorageWrapper* svWrapper)
 {
-	auto&& writebuf = ((RE::WriteBuffer*)svWrapper->unk10);
+	auto&& writebuf = svWrapper->buffer;
 	writebuf->startPtr = nullptr;
 	writebuf->size = 0;
 	writebuf->curPtr = nullptr;
@@ -48,6 +45,16 @@ static void Dtor(RE::SaveStorageWrapper* svWrapper)
 }
 
 DWORD vmSaveThreadID = 0;
+
+// VR-only: bypasses the global VM mutex (DAT_1434229f8) in IVMSaveLoadInterface::SaveGame
+// for the background thread. See Install() for full explanation.
+static void (*_VRMutexLock1)(void*, int32_t) = nullptr;
+static void VRSkipMutexLock(void* mutex, int32_t unk)
+{
+	if (GetCurrentThreadId() == vmSaveThreadID)
+		return;  // skip: bg thread must not compete with FreezeVM for this mutex
+	_VRMutexLock1(mutex, unk);
+}
 
 void SaveOptimization::Install()
 {
@@ -71,14 +78,33 @@ void SaveOptimization::Install()
 		REL::Relocation<LPVOID> ensurecap{ RELOCATION_ID(19760, 20154) };  //buffer growth
 		MH_CreateHook(ensurecap.get(), EnsureCapacity, (LPVOID*)&_EnsureCapacity);
 		logger::debug("  EnsureCapacity @ {:x}", ensurecap.address());
+
+		if (REL::Module::IsVR()) {
+			// VR's IVMSaveLoadInterface::SaveGame acquires a global VM mutex (DAT_1434229f8)
+			// as its very first instruction (function start + 0x3E, disasm-verified).
+			// SkyrimVM::FreezeVM (called from the main-thread BGSSaveLoadGame::SaveGame
+			// pipeline) also holds this same mutex, then calls into IVMSaveLoadInterface::
+			// SaveGame. If our background thread tries to acquire it concurrently:
+			//   - BG thread holds it → FreezeVM blocks → main reaches our SaveVM hook →
+			//     vmSave.get() blocks → FreezeVM never releases → DEADLOCK.
+			// Fix: hook the SPECIFIC Mutex::Lock1 call at offset 0x3E within SaveGame and
+			// skip it when running on the VM-save background thread. The VM-internal mutexes
+			// later in the function (offsets 0x15C, 0x173, 0x18A, …) are NOT intercepted.
+			// The inlined unlock at the function end checks GetCurrentThreadId() against
+			// DAT_1434229f8; since we never set that, it safely no-ops.
+			auto mutexCallSite = savevm.address() + 0x3e;
+			auto orig = SKSE::GetTrampoline().write_call<5>(mutexCallSite, VRSkipMutexLock);
+			_VRMutexLock1 = reinterpret_cast<decltype(_VRMutexLock1)>(orig);
+			logger::debug("  VR SaveVM global-mutex bypass @ {:x}", mutexCallSite);
+		}
 	}
 
 	{  //Stringtable caching
-		REL::Relocation<LPVOID> dtorstrtable{ RELOCATION_ID(98106, 104829), REL::VariantOffset(0xAF2, 0xAE8, 0) };
+		REL::Relocation<LPVOID> dtorstrtable{ RELOCATION_ID(98106, 104829), REL::VariantOffset(0xAF2, 0xAE8, 0xAF2) };
 		_UnloadStringTable = SKSE::GetTrampoline().write_call<5>(dtorstrtable.address(), UnloadStringTable);
 		logger::debug("  UnloadStringTable @ {:x}", dtorstrtable.address());
 
-		//Hook ResetState
+		//ResetState optimization
 		REL::Relocation<LPVOID> resetstate{ RELOCATION_ID(98158, 104882) };
 		MH_CreateHook(resetstate.get(), ResetState, (LPVOID*)&_ResetState);
 		logger::debug("  ResetState @ {:x}", resetstate.address());
@@ -139,7 +165,7 @@ void SaveOptimization::SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::Skyr
 	//      char svWrapperSpace[0x38]{};
 	//      char fileStrSpace[0xBE8]{};
 	//      RE::SaveStorageWrapper* svWrapper = Ctor(&svWrapperSpace, (RE::Win32FileType*)&fileStrSpace, 64 * 1024 * 1024);
-	//      auto&& buf = ((RE::WriteBuffer*)svWrapper->unk10);
+	//      auto&& buf = svWrapper->buffer;
 
 	//      _SaveVM(thiz, svWrapper, writer, bForceResetState);
 
@@ -152,7 +178,7 @@ void SaveOptimization::SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::Skyr
 	//      free(ptr);
 	//  }
 
-	save->unk18 = 0;                                //bWriteToBuffer
+	save->bWriteToBuffer = 0;                       //bWriteToBuffer
 	save->Write(2, (std::byte*)writebuf.startPtr);  //Version NUM
 
 	//Saving Stringtable
@@ -166,7 +192,7 @@ void SaveOptimization::SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::Skyr
 	}
 	//Rest of Data
 	save->Write((uint64_t)writebuf.curPtr - (uint64_t)writebuf.startPtr - 2, (std::byte*)writebuf.startPtr + 2);
-	save->unk18 = 1;
+	save->bWriteToBuffer = 1;
 
 	free(writebuf.startPtr);
 	return;
@@ -174,7 +200,7 @@ void SaveOptimization::SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::Skyr
 
 void SaveOptimization::SaveGame(RE::BGSSaveLoadGame* thiz, RE::Win32FileType* fileStream)
 {
-	auto promise = std::make_shared<std::promise<RE::WriteBuffer>>();
+	auto promise = std::make_shared<std::promise<RE::BSStorage::WriteBuffer>>();
 	vmSave = promise->get_future();
 
 	logger::debug("Save triggered, dispatching async VM save");
@@ -185,7 +211,7 @@ void SaveOptimization::SaveGame(RE::BGSSaveLoadGame* thiz, RE::Win32FileType* fi
 		char                    svWrapperSpace[0x38]{};
 		char                    fileStrSpace[0xBE8]{};
 		RE::SaveStorageWrapper* svWrapper = Ctor(&svWrapperSpace, (RE::Win32FileType*)&fileStrSpace, 64 * 1024 * 1024);
-		auto&&                  writebuf = ((RE::WriteBuffer*)svWrapper->unk10);
+		auto&&                  writebuf = svWrapper->buffer;
 
 		auto writer = RE::VTABLE_SkyrimScript__SaveFileHandleReaderWriter[0].address();
 
@@ -209,7 +235,7 @@ RE::BSStorageDefs::ErrorCode SaveOptimization::EnsureCapacity(RE::SaveStorageWra
 	if (GetCurrentThreadId() != vmSaveThreadID)
 		return _EnsureCapacity(thiz, size);
 
-	auto&& writebuf = ((RE::WriteBuffer*)thiz->unk10);
+	auto&& writebuf = thiz->buffer;
 	size_t used = (uint64_t)writebuf->curPtr - (uint64_t)writebuf->startPtr;
 	size_t available = writebuf->size - used;
 
@@ -260,7 +286,7 @@ void SaveOptimization::UnloadStringTable(RE::BSScript::ReadableStringTable* thiz
 
 void SaveOptimization::ResetState(RE::BSScript::Internal::VirtualMachine* thiz)
 {
-	thiz->unk94D0 = thiz->arrays.size();  //arrayCount
+	thiz->arrayCount = thiz->arrays.size();  //arrayCount
 
 	if (!thiz->writeableTypeTable) {
 		auto&& scrapheap = RE::MemoryManager::GetSingleton()->GetThreadScrapHeap();
@@ -275,7 +301,7 @@ void SaveOptimization::ResetState(RE::BSScript::Internal::VirtualMachine* thiz)
 	auto&& typeTable = (RE::BSTScrapHashMap<RE::BSFixedString, RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo>>*)thiz->writeableTypeTable;
 	typeTable->clear();
 	typeTable->reserve(thiz->objectTypeMap.size());
-	thiz->unk94CC = 0;  //scriptCount
+	thiz->scriptCount = 0;
 	for (auto&& obj : thiz->attachedScripts) {
 		for (auto&& script : obj.second) {
 			auto typeInfo = script->type;
@@ -285,7 +311,7 @@ void SaveOptimization::ResetState(RE::BSScript::Internal::VirtualMachine* thiz)
 					break;
 				typeInfo = typeInfo->parentTypeInfo;
 			}
-			thiz->unk94CC++;  //scriptCount
+			thiz->scriptCount++;
 		}
 	}
 	for (auto&& obj : thiz->objectsAwaitingCleanup) {
