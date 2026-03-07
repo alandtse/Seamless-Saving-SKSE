@@ -71,6 +71,7 @@ jobs:
           if ("${{ inputs.version }}" -ne "") {
             $version = "${{ inputs.version }}"
             $version = $version.Trim()
+            # strip leading 'v' if present
             if ($version -match '^v(.+)$') {
               $version = $matches[1]
             }
