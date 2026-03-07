@@ -69,10 +69,11 @@ The CMake build now uses the copy of CommonLibSSE stored under `lib/commonlibsse
 vcpkg. You do **not** need to install the package in vcpkg, although
 vcpkg support is still recognised for other libraries if you have it set up.
 
-> **Versioning:** the authoritative version string lives in `package.json`.
-> xmake, CMake, and CI derive the version directly from this file; nothing
-> else should contain a version string. The build will fail if `package.json`
-> is missing or does not contain a `version` field.
+- **Versioning:** the authoritative version string lives in `xmake.lua`.
+  > A line near the top of that file declares `local version = "x.y.z"`.
+  > semantic-release will update this value automatically on each release via
+  > regex; you never need to edit it manually. Build locally with a single
+  > `xmake` or `xmake -m releasedbg`; no extra scripting is required.
 
 **Additional requirements:** [CMake](https://cmake.org) 3.21+ (vcpkg is
 optional and only used if `VCPKG_ROOT` is defined)
