@@ -8,7 +8,15 @@ includes("lib/commonlibsse-ng")
 set_project("SeamlessSaving")
 set_license("MIT")
 
-local version = "1.0.6"
+-- determine project version (package.json is the single source of truth)
+if not os.isfile("package.json") then
+    raise("package.json not found; version must be defined there")
+end
+local pkg = io.readfile("package.json")
+local version = pkg:match('"version"%s*:%s*"([^"]+)"')
+if not version then
+    raise("version field not found in package.json")
+end
 local ver = version:split("%.")
 set_version(version)
 

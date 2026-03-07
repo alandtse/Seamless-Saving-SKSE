@@ -1,0 +1,10 @@
+{
+  "name": "seamless-saving",
+  "version": "1.0.6",
+  "private": true,
+  "description": "Seamless Saving SKSE plugin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alandtse/Seamless-Saving-SKSE.git"
+  }
+}

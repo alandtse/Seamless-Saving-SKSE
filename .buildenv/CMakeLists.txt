@@ -8,9 +8,23 @@ cmake_minimum_required(VERSION 3.21)
 
 # [BEGIN set_project_name]
 # Set your project name. This will be the name of your SKSE .dll file.
-file(READ "${CMAKE_SOURCE_DIR}/../xmake.lua" _xmake_lua)
-string(REGEX MATCH "local version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\"" _ "${_xmake_lua}")
-project(SeamlessSaving VERSION ${CMAKE_MATCH_1} LANGUAGES CXX)
+# Determine the project version. Prefer package.json (the authoritative
+# version file).  fall back to parsing xmake.lua for compatibility.
+set(_version "")
+if(EXISTS "${CMAKE_SOURCE_DIR}/../package.json")
+    file(READ "${CMAKE_SOURCE_DIR}/../package.json" _pkg)
+    string(REGEX MATCH "\"version\"[ 	]*:[ 	]*\"([0-9]+\.[0-9]+\.[0-9]+)\"" _match "${_pkg}")
+    if(_match)
+        set(_version "${CMAKE_MATCH_1}")
+    endif()
+endif()
+if(NOT _version)
+    # fallback: parse xmake.lua the old way
+    file(READ "${CMAKE_SOURCE_DIR}/../xmake.lua" _xmake_lua)
+    string(REGEX MATCH "local version = \"([0-9]+\.[0-9]+\.[0-9]+)\"" _ "${_xmake_lua}")
+    set(_version "${CMAKE_MATCH_1}")
+endif()
+project(SeamlessSaving VERSION ${_version} LANGUAGES CXX)
 
 file(GLOB_RECURSE sources CONFIGURE_DEPENDS ../src/*.cpp ../src/*.h)
 
