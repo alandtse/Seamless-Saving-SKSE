@@ -63,7 +63,6 @@ add_files("src/**.cpp")
 add_headerfiles("src/**.h")
 add_includedirs("src")
 set_pcxxheader("src/pch.h")
-add_configfiles("src/Version.h.in")
 
 -- auto deploy
 -- SkyrimPluginTargets: semicolon-separated list of mod/data dirs (xmake-style)
