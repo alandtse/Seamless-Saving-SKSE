@@ -35,15 +35,19 @@ jobs:
     name: Build on Windows
     runs-on: windows-latest
     if: github.repository_owner == 'alandtse'
+    timeout-minutes: 60
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           submodules: "recursive"
           ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
       - name: Setup xmake
-        uses: xmake-io/github-action-setup-xmake@v1
+        uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a # v1
         with:
           xmake-version: latest
 
@@ -139,7 +143,7 @@ jobs:
 
       - name: Upload artifact
         if: inputs.upload-artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact_info.outputs.artifact-name }}
           path: ${{ steps.artifact_info.outputs.artifact-path }}

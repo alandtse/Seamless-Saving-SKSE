@@ -7,8 +7,8 @@ public:
 	static void ResetCaches();
 
 protected:
-	static void SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::SkyrimScript::SaveFileHandleReaderWriter* writer, bool bForceResetState);
-	static void SaveGame(RE::BGSSaveLoadGame* thiz, RE::Win32FileType* fileStream);
+	static void                         SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::SkyrimScript::SaveFileHandleReaderWriter* writer, bool bForceResetState);
+	static void                         SaveGame(RE::BGSSaveLoadGame* thiz, RE::Win32FileType* fileStream);
 	static RE::BSStorageDefs::ErrorCode EnsureCapacity(RE::SaveStorageWrapper* thiz, unsigned __int64 size);
 
 	static void UnloadStringTable(RE::BSScript::ReadableStringTable* thiz);
@@ -27,6 +27,6 @@ protected:
 
 	static inline REL::Relocation<decltype(InsertFormID)> _InsertFormID;
 
-	static void Save(RE::BGSSaveLoadManager* thiz, unsigned int type, unsigned int a3, char* a4);
+	static void                                   Save(RE::BGSSaveLoadManager* thiz, unsigned int type, unsigned int a3, char* a4);
 	static inline REL::Relocation<decltype(Save)> _Save;
 };
