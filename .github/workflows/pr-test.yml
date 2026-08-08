@@ -9,7 +9,8 @@ on:
       - "xmake.lua"
       # Dependencies
       - ".gitmodules"
-      - "extern/**"
+      - "lib/**"
+      - "xmake-requires.lock"
       # CI workflows that affect the build
       - ".github/workflows/build-reusable.yml"
       - ".github/workflows/pr-test.yml"
